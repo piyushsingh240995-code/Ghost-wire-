@@ -17,7 +17,7 @@ In a world of constant surveillance, GhostWire provides a dark, secure void for 
 - **Incinerate Command**: Complete conversation purging that leaves no residue in the cloud.
 
 ### 🤖 Savage Intelligence
-- **Ultron AI Assistant**: A ULT-PROTO-99 powerd (my llm model but if tou want then you can use gemini api) ai intelligence that provides savage, no-nonsense help. Access the bot anytime for data analysis or brutal honesty.
+- **Ultron AI Assistant**: A Gemini-powered intelligence that provides savage, no-nonsense help. Access the bot anytime for data analysis or brutal honesty.
 
 ### 📡 High-Fidelity Transmissions
 - **Real-time Sync**: Instant signal delivery with millisecond-latency typing indicators and seen receipts.

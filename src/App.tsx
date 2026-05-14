@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from 'react';
 import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs, writeBatch, deleteDoc } from 'firebase/firestore';
-import { MessageSquare, Bot, User, Ghost, LogOut, ShieldAlert } from 'lucide-react';
+import { MessageSquare, Bot, User, Ghost, LogOut, ShieldAlert, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { generateIdentityKeys, unwrapPrivateKey } from './lib/crypto';
@@ -54,25 +54,33 @@ export default function App() {
     let unsubProfile: (() => void) | null = null;
     let unsubConvList: (() => void) | null = null;
 
-    const userRef = doc(db, 'users', user!.uid);
-    const privateKeyRef = doc(db, 'private_keys', user!.uid);
+    const userRef = doc(db, 'users', user.uid);
+    const privateKeyRef = doc(db, 'private_keys', user.uid);
 
     async function syncProfile() {
       console.log("Protocol Handshake Initialized...");
       setInitError(null);
+      setLoading(true);
 
-      // Safety timeout to prevent infinite loading state
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("HANDSHAKE_TIMEOUT: Signal unstable. Check connection.")), 15000)
+        setTimeout(() => reject(new Error("HANDSHAKE_TIMEOUT: Signal unstable. Check connection.")), 20000)
       );
 
       try {
         await Promise.race([
           (async () => {
-            const [snap, pvSnap] = await Promise.all([
-              getDoc(userRef),
-              getDoc(privateKeyRef)
-            ]);
+            let snap, pvSnap;
+            try {
+              [snap, pvSnap] = await Promise.all([
+                getDoc(userRef),
+                getDoc(privateKeyRef)
+              ]);
+            } catch (err: any) {
+              if (err.message.includes("resource-exhausted") || err.code === "resource-exhausted") {
+                throw new Error("QUOTA_EXHAUSTED: Signal limit reached.");
+              }
+              throw err;
+            }
             
             let currentProfile: any = null;
 
@@ -143,119 +151,90 @@ export default function App() {
                 }
               }
 
-              if (currentProfile.soundEnabled === undefined) {
-                updates.soundEnabled = true;
-              }
-              
+              if (currentProfile.soundEnabled === undefined) updates.soundEnabled = true;
               const isAdmin = user!.email === 'piyushsingh240995@gmail.com';
-              if (currentProfile.isAdmin !== isAdmin) {
-                updates.isAdmin = isAdmin;
-              }
-              
-              if (!currentProfile.username) {
-                updates.username = (user!.displayName || 'user').toLowerCase().replace(/\s+/g, '_') + '_' + Math.floor(Math.random() * 1000);
-              }
+              if (currentProfile.isAdmin !== isAdmin) updates.isAdmin = isAdmin;
+              if (!currentProfile.username) updates.username = (user!.displayName || 'user').toLowerCase().replace(/\s+/g, '_') + '_' + Math.floor(Math.random() * 1000);
 
               if (Object.keys(updates).length > 0) {
-                await updateDoc(userRef, updates);
-                currentProfile = { ...currentProfile, ...updates };
+                try {
+                  await updateDoc(userRef, updates);
+                  currentProfile = { ...currentProfile, ...updates };
+                } catch (e) {
+                  console.warn("Handshake partial update failed (Quota?):", e);
+                }
               }
 
               setProfile(currentProfile);
               console.log("Handshake Complete (Established Identity)");
             }
+
+            // START LISTENERS AFTER PROFILE IS SYNCED
+            unsubProfile = onSnapshot(userRef, async (s) => {
+              const data = s.data();
+              if (data?.isBanned) {
+                await auth.signOut();
+                alert("BY THE WILL OF THE ARCHITECT, YOUR SIGNAL HAS BEEN PERMANENTLY INCINERATED.");
+              }
+              setProfile(data);
+            });
+
+            const qConv = query(
+              collection(db, 'conversations'),
+              where('participants', 'array-contains', user!.uid)
+            );
+            
+            unsubConvList = onSnapshot(qConv, (snap) => {
+              let total = 0;
+              const newCounts: Record<string, number> = {};
+              snap.docs.forEach(doc => {
+                const data = doc.data();
+                const count = data.unreadCount?.[user!.uid] || 0;
+                total += count;
+                newCounts[doc.id] = count;
+                if (!isFirstLoad.current && count > (prevUnreadCounts.current[doc.id] || 0)) {
+                  if (Notification.permission === 'granted' && (document.hidden || selectedChat !== doc.id)) {
+                    new Notification(`New Signal Detected`, {
+                      body: data.lastMessage || 'Information received.',
+                      icon: '/ghost.png'
+                    });
+                  }
+                }
+              });
+              setTotalUnread(total);
+              prevUnreadCounts.current = newCounts;
+              isFirstLoad.current = false;
+            });
+
           })(),
           timeoutPromise
         ]);
       } catch (error: any) {
         console.error("CRITICAL PROTOCOL ERROR:", error);
-        setInitError(error?.message || "HANDSHAKE_TIMEOUT: Signal unstable.");
+        let message = error?.message || "HANDSHAKE_TIMEOUT: Signal unstable.";
+        if (message.includes("resource-exhausted") || message.includes("Quota limit exceeded")) {
+          message = "QUOTA_EXHAUSTED: Daily signal limit reached. Protocol will resume after daily reset.";
+        }
+        setInitError(message);
       } finally {
         setLoading(false);
       }
     }
 
-      // Live profile updates
-      unsubProfile = onSnapshot(userRef, async (s) => {
-        const data = s.data();
-        if (data?.isBanned) {
-          await auth.signOut();
-          alert("BY THE WILL OF THE ARCHITECT, YOUR SIGNAL HAS BEEN PERMANENTLY INCINERATED.");
-        }
-        setProfile(data);
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, 'users/' + user!.uid);
-      });
-
-      // Conversations listener
-      const qConv = query(
-        collection(db, 'conversations'),
-        where('participants', 'array-contains', user!.uid)
-      );
-      
-      unsubConvList = onSnapshot(qConv, (snap) => {
-        let total = 0;
-        const newCounts: Record<string, number> = {};
-        
-        snap.docs.forEach(doc => {
-          const data = doc.data();
-          const count = data.unreadCount?.[user!.uid] || 0;
-          total += count;
-          newCounts[doc.id] = count;
-
-          if (!isFirstLoad.current && count > (prevUnreadCounts.current[doc.id] || 0)) {
-            if (Notification.permission === 'granted' && (document.hidden || selectedChat !== doc.id)) {
-              new Notification(`New Signal Detected`, {
-                body: data.lastMessage || 'Information received.',
-                icon: '/ghost.png'
-              });
-            }
-          }
-        });
-        
-        setTotalUnread(total);
-        prevUnreadCounts.current = newCounts;
-        isFirstLoad.current = false;
-      });
-
-      syncProfile();
-
-      return () => {
-        unsubProfile?.();
-        unsubConvList?.();
-        isFirstLoad.current = true;
-      };
-    }, [user?.uid]);
-
-  const lastSeenUpdateRef = useRef<number>(0);
-
-  // Activity-based lastSeen update
-  useEffect(() => {
-    if (!user || !profile || profile.ghostMode) return;
-
-    const updateLastSeen = async () => {
-      const now = Date.now();
-      if (now - lastSeenUpdateRef.current > 600000) { // Throttle to 10 minutes
-        lastSeenUpdateRef.current = now;
-        try {
-          await updateDoc(doc(db, 'users', user.uid), { lastSeen: serverTimestamp() });
-        } catch (e) {
-          // Silent error for periodic update
-        }
-      }
-    };
-
-    window.addEventListener('mousemove', updateLastSeen);
-    window.addEventListener('keydown', updateLastSeen);
-    window.addEventListener('click', updateLastSeen);
-    const interval = setInterval(updateLastSeen, 60000);
+    syncProfile();
 
     return () => {
-      window.removeEventListener('mousemove', updateLastSeen);
-      window.removeEventListener('keydown', updateLastSeen);
-      window.removeEventListener('click', updateLastSeen);
-      clearInterval(interval);
+      unsubProfile?.();
+      unsubConvList?.();
+      isFirstLoad.current = true;
     };
+  }, [user?.uid]);
+
+
+  // Activity tracking removed to save quota
+  useEffect(() => {
+    if (!user || !profile || profile.ghostMode) return;
+    // We only update lastSeen on initial handshake to save quota
   }, [user?.uid, profile?.ghostMode]);
 
   const resetProtocol = async () => {
@@ -291,28 +270,47 @@ export default function App() {
           className="text-center space-y-6 max-w-md border border-red-500/20 bg-red-500/5 p-8 rounded-3xl"
         >
           <div className="flex justify-center">
-            <ShieldAlert className="w-16 h-16 text-red-500" />
+            {initError.includes("QUOTA_EXHAUSTED") ? (
+              <Lock className="w-16 h-16 text-amber-500" />
+            ) : (
+              <ShieldAlert className="w-16 h-16 text-red-500" />
+            )}
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-red-500 uppercase">Signal Intervention</h2>
+          <h2 className={cn(
+            "text-2xl font-bold tracking-tight uppercase",
+            initError.includes("QUOTA_EXHAUSTED") ? "text-amber-500" : "text-red-500"
+          )}>
+            {initError.includes("QUOTA_EXHAUSTED") ? "Bandwidth Exhausted" : "Signal Intervention"}
+          </h2>
           <div className="space-y-2">
-            <p className="text-zinc-400 text-sm">Your identity vault has been compromised or corrupted.</p>
+            <p className="text-zinc-400 text-sm">
+              {initError.includes("QUOTA_EXHAUSTED") 
+                ? "The transmission frequency has exceeded the daily free limit for this project."
+                : "Your identity vault has been compromised or corrupted."}
+            </p>
             <code className="block p-2 bg-black rounded text-[10px] text-zinc-500 overflow-x-auto">
               {initError}
             </code>
           </div>
           <div className="flex flex-col gap-3">
-            <button
-              onClick={() => window.location.reload()}
-              className="w-full py-3 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors"
-            >
-              Retry Handshake
-            </button>
-            <button
-              onClick={resetProtocol}
-              className="w-full py-3 bg-red-500/10 text-red-400 font-semibold rounded-xl hover:bg-red-500/20 transition-colors border border-red-500/20"
-            >
-              Purge Keys & Reset Protocol
-            </button>
+            {initError.includes("QUOTA_EXHAUSTED") ? (
+              <p className="text-[10px] text-zinc-600 italic">Quota resets daily. Please check back later or upgrade your Firebase plan.</p>
+            ) : (
+              <>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full py-3 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors"
+                >
+                  Retry Handshake
+                </button>
+                <button
+                  onClick={resetProtocol}
+                  className="w-full py-3 bg-red-500/10 text-red-400 font-semibold rounded-xl hover:bg-red-500/20 transition-colors border border-red-500/20"
+                >
+                  Purge Keys & Reset Protocol
+                </button>
+              </>
+            )}
             <button
               onClick={logout}
               className="text-zinc-600 text-xs hover:text-zinc-400 underline"
@@ -368,10 +366,26 @@ export default function App() {
           <h1 className="text-4xl font-bold tracking-tighter">GHOST CHAT</h1>
           <p className="text-zinc-400">Untraceable. Invisible. Savage.</p>
           <button
-            onClick={signIn}
-            className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2"
+            disabled={loading}
+            onClick={async () => {
+              try {
+                setLoading(true);
+                await signIn();
+              } catch (e: any) {
+                console.error("Initiating signal switch failure:", e);
+                setLoading(false);
+                if (e.code === 'auth/popup-blocked') {
+                  alert("SIGNAL_BLOCKED: Handshake intercepted. Please enable popups.");
+                } else if (e.code === 'auth/network-request-failed') {
+                  alert("SIGNAL_LOST: Network connection failed.");
+                } else {
+                  alert("HANDSHAKE_ERROR: Protocol connection failed.");
+                }
+              }
+            }}
+            className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            Enter the Void
+            {loading ? "ESTABLISHING SIGNAL..." : "Enter the Void"}
           </button>
         </motion.div>
       </div>

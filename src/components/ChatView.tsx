@@ -46,8 +46,11 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
     };
   }, [input, conversationId]);
 
+  const isTypingRef = useRef(false);
+
   const updateTypingStatus = async (isTyping: boolean) => {
-    if (!auth.currentUser || !conversationId) return;
+    if (!auth.currentUser || !conversationId || isTyping === isTypingRef.current) return;
+    isTypingRef.current = isTyping;
     try {
       await updateDoc(doc(db, 'conversations', conversationId), {
         [`typing.${auth.currentUser.uid}`]: isTyping
@@ -71,10 +74,18 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
       if (data?.unreadCount?.[auth.currentUser?.uid || ''] > 0) {
         updateDoc(convRef, {
           [`unreadCount.${auth.currentUser?.uid}`]: 0
-        }).catch(e => console.error("Unread reset error:", e));
+        }).catch(e => {
+            if (e.message.includes("resource-exhausted")) {
+                console.warn("QUOTA ERROR: Could not reset unread count.");
+            }
+        });
       }
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'conversations/' + conversationId);
+      if (error.message.includes("resource-exhausted")) {
+        console.error("Quota exceeded during conversation listen.");
+      } else {
+        handleFirestoreError(error, OperationType.GET, 'conversations/' + conversationId);
+      }
     });
 
     const q = query(
@@ -108,13 +119,21 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
             batch.update(doc(db, 'conversations', conversationId, 'messages', m.id), { seen: true });
           });
           batch.commit().catch(e => {
-            console.error("Batch seen sync failed:", e);
+            if (e.message.includes("resource-exhausted")) {
+                console.warn("QUOTA ERROR: Could not sync seen status.");
+            } else {
+                console.error("Batch seen sync failed:", e);
+            }
             unreadMsgs.forEach(m => markedSeenRef.current.delete(m.id));
           });
         }
       }
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `conversations/${conversationId}/messages`);
+      if (error.message.includes("resource-exhausted")) {
+        console.error("Quota exceeded during messages listen.");
+      } else {
+        handleFirestoreError(error, OperationType.LIST, `conversations/${conversationId}/messages`);
+      }
     });
 
     // Fetch Recipient Public Key

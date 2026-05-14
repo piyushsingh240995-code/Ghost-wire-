@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -9,7 +9,7 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 export const signIn = () => signInWithPopup(auth, googleProvider);
-export const logout = () => auth.signOut();
+export const logout = () => signOut(auth);
 
 export enum OperationType {
   CREATE = 'create',
