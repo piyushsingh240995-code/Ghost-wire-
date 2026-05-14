@@ -1,0 +1,111 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string", "description": "Unique searchable handle." },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "ghostMode": { "type": "boolean", "description": "If true, user stays offline and hides seen receipts." },
+        "soundEnabled": { "type": "boolean" },
+        "autoPurge": { "type": "boolean" },
+        "blockedUsers": { "type": "array", "items": { "type": "string" }, "description": "List of UIDs that this user has blocked." },
+        "publicKey": { "type": "string", "description": "RSA Public Key for E2EE" },
+        "isAdmin": { "type": "boolean" },
+        "lastSeen": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "email"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "A chat between two or more users.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isEphemeral": { "type": "boolean", "description": "If true, messages in this conversation are cleared frequently or on specific triggers." }
+      },
+      "required": ["id", "participants", "updatedAt"]
+    },
+    "PrivateKey": {
+      "title": "PrivateKey",
+      "description": "Securely stored RSA Private Key, wrapped with a vault key derived from user identity.",
+      "type": "object",
+      "properties": {
+        "wrappedPrivateKey": { "type": "string" },
+        "vaultIv": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single communication signal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "content": { "type": "string" },
+        "encryptedPayload": { "type": "string" },
+        "sealedKey": { "type": "string" },
+        "iv": { "type": "string" },
+        "isEncrypted": { "type": "boolean" },
+        "fileData": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "seen": { "type": "boolean" },
+        "reactions": { "type": "object" },
+        "isSystem": { "type": "boolean" }
+      },
+      "required": ["id", "conversationId", "senderId", "content", "createdAt"]
+    },
+    "UltronHistory": {
+      "title": "UltronHistory",
+      "description": "Persistent conversation history with Ultron AI.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "messages": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "role": { "type": "string", "enum": ["user", "model"] },
+              "text": { "type": "string" }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles and settings."
+    },
+    "/conversations/{convId}": {
+      "schema": "Conversation",
+      "description": "Stores metadata about chat threads."
+    },
+    "/conversations/{convId}/messages/{msgId}": {
+      "schema": "Message",
+      "description": "Stores messages within a specific conversation."
+    },
+    "/ultron_history/{userId}": {
+      "schema": "UltronHistory",
+      "description": "Stores persistent conversation history with Ultron AI for each user."
+    },
+    "/private_keys/{userId}": {
+      "schema": "PrivateKey",
+      "description": "Secure storage for a user's RSA private key."
+    }
+  }
+}
