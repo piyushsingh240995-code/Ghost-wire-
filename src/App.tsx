@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { auth, db, signIn, logout, handleFirestoreError, OperationType } from './lib/firebase';
+import { auth, db, logout, handleFirestoreError, OperationType, signInWithGoogle } from './lib/firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot, updateDoc, serverTimestamp, collection, query, where, getDocs, writeBatch, deleteDoc } from 'firebase/firestore';
 import { MessageSquare, Bot, User, Ghost, LogOut, ShieldAlert, Lock } from 'lucide-react';
@@ -25,6 +25,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'chats' | 'ultron' | 'profile'>('chats');
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
   const [totalUnread, setTotalUnread] = useState(0);
+  const [authLoading, setAuthLoading] = useState(false);
   const prevUnreadCounts = useRef<Record<string, number>>({});
   const isFirstLoad = useRef(true);
 
@@ -63,7 +64,7 @@ export default function App() {
       setLoading(true);
 
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("HANDSHAKE_TIMEOUT: Signal unstable. Check connection.")), 20000)
+        setTimeout(() => reject(new Error("HANDSHAKE_TIMEOUT: Signal unstable. Check connection.")), 30000)
       );
 
       try {
@@ -261,7 +262,7 @@ export default function App() {
     }
   };
 
-  if (initError) {
+  if (initError && user) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#0a0a0a] text-white p-6">
         <motion.div
@@ -345,6 +346,11 @@ export default function App() {
     );
   }
 
+  const updateIdentityPassword = async () => {
+    // Hidden feature for now since we're using Google only UI
+    alert("PASSWORD_STRICT: Signal managed by external provider.");
+  };
+
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-[#0a0a0a] text-white p-6">
@@ -363,30 +369,46 @@ export default function App() {
               />
             </div>
           </div>
-          <h1 className="text-4xl font-bold tracking-tighter">GHOST CHAT</h1>
-          <p className="text-zinc-400">Untraceable. Invisible. Savage.</p>
+          <h1 className="text-4xl font-bold tracking-tighter italic">GHOST CHAT</h1>
+          <p className="text-zinc-500 text-sm tracking-widest uppercase font-black">Untraceable. Invisible. Savage.</p>
+          
           <button
-            disabled={loading}
+            disabled={loading || authLoading}
             onClick={async () => {
+              setLoading(true);
+              setInitError(null);
               try {
-                setLoading(true);
-                await signIn();
+                await signInWithGoogle();
               } catch (e: any) {
                 console.error("Initiating signal switch failure:", e);
                 setLoading(false);
                 if (e.code === 'auth/popup-blocked') {
-                  alert("SIGNAL_BLOCKED: Handshake intercepted. Please enable popups.");
+                  setInitError("SIGNAL_BLOCKED: Handshake intercepted. Please enable popups.");
                 } else if (e.code === 'auth/network-request-failed') {
-                  alert("SIGNAL_LOST: Network connection failed.");
+                  setInitError("SIGNAL_LOST: Network connection failed.");
+                } else if (e.code === 'auth/popup-closed-by-user') {
+                  setInitError("SIGNAL_ABORTED: Handshake terminated by user.");
+                } else if (e.code === 'auth/operation-not-allowed') {
+                  setInitError("PROTOCOL_DISABLED: Google Login is NOT enabled in your Firebase Console.");
                 } else {
-                  alert("HANDSHAKE_ERROR: Protocol connection failed.");
+                  setInitError("HANDSHAKE_ERROR: Protocol connection failed. Check your Firebase console settings.");
                 }
               }
             }}
-            className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 uppercase tracking-tighter"
           >
-            {loading ? "ESTABLISHING SIGNAL..." : "Enter the Void"}
+            {(loading || authLoading) ? "ESTABLISHING SIGNAL..." : "Enter the Void"}
           </button>
+
+          {initError && !initError.includes("QUOTA") && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-red-500 text-[10px] uppercase font-bold tracking-widest"
+            >
+              {initError}
+            </motion.div>
+          )}
         </motion.div>
       </div>
     );
@@ -429,7 +451,7 @@ export default function App() {
             >
               {activeTab === 'chats' && <ChatListView onChatSelect={setSelectedChat} onUltronSelect={() => setActiveTab('ultron')} userProfile={profile} />}
               {activeTab === 'ultron' && <UltronView userProfile={profile} />}
-              {activeTab === 'profile' && <ProfileView profile={profile} onLogout={logout} />}
+              {activeTab === 'profile' && <ProfileView profile={profile} onLogout={logout} updatePasswordFunc={updateIdentityPassword} />}
             </motion.div>
           )}
         </AnimatePresence>

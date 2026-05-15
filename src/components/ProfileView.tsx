@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, updateDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
-import { User, Shield, ShieldOff, Ghost, LogOut, ShieldAlert, UserX, UserCheck, AtSign, Camera, Check, HelpCircle, Mail, Instagram, Lock } from 'lucide-react';
+import { User, Shield, ShieldOff, Ghost, LogOut, ShieldAlert, UserX, UserCheck, AtSign, Camera, Check, HelpCircle, Mail, Instagram, Lock, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
@@ -13,13 +13,15 @@ const AVATARS = [
   'https://api.dicebear.com/7.x/big-smile/svg?seed=Savage'
 ];
 
-export default function ProfileView({ profile, onLogout }: { profile: any, onLogout: () => void }) {
+export default function ProfileView({ profile, onLogout, updatePasswordFunc }: { profile: any, onLogout: () => void, updatePasswordFunc?: (pass: string) => Promise<void> }) {
   const [ghostMode, setGhostMode] = useState(profile?.ghostMode || false);
   const [autoPurge, setAutoPurge] = useState(profile?.autoPurge || false);
   const [username, setUsername] = useState(profile?.username || '');
   const [displayName, setDisplayName] = useState(profile?.displayName || '');
   const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
   const [soundEnabled, setSoundEnabled] = useState(profile?.soundEnabled !== false);
+  const [newPass, setNewPass] = useState('');
+  const [updatingPass, setUpdatingPass] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -325,6 +327,52 @@ export default function ProfileView({ profile, onLogout }: { profile: any, onLog
           </div>
           <p className="text-[11px] text-zinc-500 leading-relaxed font-medium">
             In Ghost Mode, you will not appear "Online" and message "Seen" receipts will be suppressed. Total invisibility for the elite operator.
+          </p>
+        </section>
+
+        {/* Password Update Section */}
+        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-2xl bg-zinc-800 text-zinc-400">
+              <Key className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold tracking-tight uppercase">Update Passphrase</h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-black tracking-[0.1em] opacity-50">Identity Security</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+              <input
+                type="password"
+                placeholder="NEW_SIGNAL_PASSPHRASE"
+                className="w-full bg-zinc-900/50 border border-zinc-800 rounded-2xl py-3 pl-12 pr-4 text-xs focus:outline-none focus:border-zinc-600 transition-colors"
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={async () => {
+                if (!newPass) return;
+                setUpdatingPass(true);
+                try {
+                  if (updatePasswordFunc) {
+                    await updatePasswordFunc(newPass);
+                    setNewPass('');
+                  }
+                } finally {
+                  setUpdatingPass(false);
+                }
+              }}
+              disabled={updatingPass || !newPass}
+              className="w-full py-3 bg-zinc-100 text-black font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-white transition-all disabled:opacity-50"
+            >
+              {updatingPass ? "Updating Signal..." : "Commit New Passphrase"}
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600 font-medium italic">
+            Note: Updating your passphrase resets your manual login credentials. Google login remains unaffected.
           </p>
         </section>
 
