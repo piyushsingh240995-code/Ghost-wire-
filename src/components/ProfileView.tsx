@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, updateDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
-import { User, Shield, ShieldOff, Ghost, LogOut, ShieldAlert, UserX, UserCheck, AtSign, Camera, Check, HelpCircle, Mail, Instagram, Lock, Key } from 'lucide-react';
+import { User, Shield, ShieldOff, Ghost, LogOut, ShieldAlert, UserX, UserCheck, AtSign, Camera, Check, HelpCircle, Mail, Instagram, Lock, Key, Palette } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { THEMES, getTheme } from '../lib/themes';
 
 const AVATARS = [
   'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
@@ -14,6 +15,7 @@ const AVATARS = [
 ];
 
 export default function ProfileView({ profile, onLogout, updatePasswordFunc }: { profile: any, onLogout: () => void, updatePasswordFunc?: (pass: string) => Promise<void> }) {
+  const currentTheme = getTheme(profile?.theme || localStorage.getItem('ghostchat_theme') || 'ghostwire');
   const [ghostMode, setGhostMode] = useState(profile?.ghostMode || false);
   const [autoPurge, setAutoPurge] = useState(profile?.autoPurge || false);
   const [username, setUsername] = useState(profile?.username || '');
@@ -115,7 +117,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6 space-y-8 bg-[#0a0a0a] pb-32">
+    <div className={cn("h-full overflow-y-auto p-6 space-y-8 pb-32 transition-colors duration-300", currentTheme.bgMain, currentTheme.textMain)}>
       {/* Profile Header */}
       <div className="flex flex-col items-center text-center space-y-6">
         <div className="relative group">
@@ -226,7 +228,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
       {/* Settings Sections */}
       <div className="space-y-6">
         {/* Encryption Active Indicator */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-2xl bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.1)]">
@@ -252,7 +254,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
         </section>
 
         {/* Sound Notifications Toggle */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className={cn(
@@ -293,7 +295,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
         </section>
 
         {/* Ghost Mode Toggle */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className={cn(
@@ -330,8 +332,88 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
           </p>
         </section>
 
+        {/* Theme Settings Selector */}
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
+          <div className="flex items-center gap-4">
+            <div className={cn(
+              "p-3 rounded-2xl transition-all shadow-inner",
+              currentTheme.id === 'ghostwire' ? "bg-rose-500/10 text-rose-500" :
+              currentTheme.id === 'override' ? "bg-red-500/10 text-red-500" :
+              currentTheme.id === 'monochrome' ? "bg-white/10 text-white" :
+              currentTheme.id === 'spectre' ? "bg-emerald-500/10 text-emerald-500" : "bg-purple-500/10 text-purple-500"
+            )}>
+              <Palette className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold tracking-tight">Theme Overlays</h3>
+              <p className="text-[10px] text-zinc-500 uppercase font-black tracking-[0.1em] opacity-50">
+                Chroma Matrix
+              </p>
+            </div>
+          </div>
+          
+          <p className="text-[11px] text-zinc-500 leading-relaxed font-medium">
+            Deploy alternative dark visual overlays designed for active operations. High-contrast configurations enhance target signal legibility in bright or strenuous conditions.
+          </p>
+
+          <div className="grid grid-cols-1 gap-3 pt-2">
+            {Object.values(THEMES).map((t) => {
+              const isActive = currentTheme.id === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={async () => {
+                    localStorage.setItem('ghostchat_theme', t.id);
+                    try {
+                      const userRef = doc(db, 'users', auth.currentUser!.uid);
+                      await updateDoc(userRef, { theme: t.id });
+                    } catch (error) {
+                      console.warn("Could not sync theme to Firebase:", error);
+                    }
+                  }}
+                  className={cn(
+                    "w-full text-left p-4 rounded-xl border transition-all flex items-center justify-between group relative overflow-hidden cursor-pointer",
+                    isActive 
+                      ? "bg-zinc-900/60 border-zinc-400 font-bold " + t.glowClass
+                      : "bg-[#0c0c0e]/30 border-zinc-850 hover:border-zinc-700"
+                  )}
+                >
+                  <div className="flex items-center gap-3 z-10">
+                    {/* Visual Color Previews */}
+                    <div className="flex gap-1 bg-zinc-950 p-1.5 rounded-lg border border-zinc-900">
+                      <span className={cn("w-3 h-3 rounded-sm block bg-black", t.id === 'ghostwire' ? 'bg-[#0a0a0a]' : '')} />
+                      <span className={cn("w-3 h-3 rounded-sm block", 
+                        t.id === 'ghostwire' ? 'bg-rose-500' :
+                        t.id === 'override' ? 'bg-red-500' :
+                        t.id === 'monochrome' ? 'bg-white' :
+                        t.id === 'spectre' ? 'bg-emerald-400' : 'bg-purple-500'
+                      )} />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold flex items-center gap-2">
+                        {t.name}
+                        {isActive && (
+                          <span className="text-[8px] bg-white/15 text-white font-black px-1.5 py-0.5 rounded-full uppercase tracking-widest border border-white/20">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5 font-medium leading-tight group-hover:text-zinc-400">
+                        {t.desc}
+                      </div>
+                    </div>
+                  </div>
+                  {isActive && (
+                    <div className="w-1.5 h-1.5 rounded-full absolute right-4 bg-white" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         {/* Password Update Section */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center gap-4">
             <div className="p-3 rounded-2xl bg-zinc-800 text-zinc-400">
               <Key className="w-6 h-6" />
@@ -377,7 +459,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
         </section>
 
         {/* Purge Toggle */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className={cn(
@@ -468,7 +550,7 @@ export default function ProfileView({ profile, onLogout, updatePasswordFunc }: {
         </section>
         
         {/* Support & Intel Section */}
-        <section className="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-6 space-y-4">
+        <section className={cn("rounded-[2rem] p-6 space-y-4", currentTheme.bgCard)}>
           <div className="flex items-center gap-4 px-1 text-left">
              <div className="p-3 bg-white/5 rounded-2xl text-zinc-400">
                <HelpCircle className="w-6 h-6" />

@@ -1,6 +1,6 @@
 {
   "name": "GhostWire",
   "description": "A high-privacy mobile chat app with Ghost Mode, ephemeral conversations, and a savage AI assistant named Ultron.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -4,12 +4,16 @@ import {
   collection, query, orderBy, onSnapshot, addDoc, 
   serverTimestamp, doc, updateDoc, deleteDoc, getDocs, writeBatch 
 } from 'firebase/firestore';
-import { Send, ArrowLeft, MoreVertical, Shield, ShieldAlert, Trash2, Ghost, Check, Smile, X, Plus, Paperclip, FileText, Image as ImageIcon, Download, Lock } from 'lucide-react';
+import { Send, ArrowLeft, MoreVertical, Shield, ShieldAlert, Trash2, Ghost, Check, Smile, X, Plus, Paperclip, FileText, Image as ImageIcon, Download, Lock, Mic, Play, Pause } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatDate } from '../lib/utils';
+import { getTheme } from '../lib/themes';
 import { encryptSignal, decryptSignal } from '../lib/crypto';
+import AudioVisualizer from './AudioVisualizer';
+import { ConfirmationModal, AlertModal } from './ui/Dialogs';
 
 export default function ChatView({ conversationId, onBack, userProfile, privateKey }: { conversationId: string, onBack: () => void, userProfile: any, privateKey: string | null }) {
+  const currentTheme = getTheme(userProfile?.theme || localStorage.getItem('ghostchat_theme') || 'ghostwire');
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [conversation, setConversation] = useState<any>(null);
@@ -21,6 +25,28 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Custom modal dialog states
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmBan, setConfirmBan] = useState<string | null>(null);
+  const [alertOpen, setAlertOpen] = useState(false);
+  const [alertTitle, setAlertTitle] = useState('');
+  const [alertMessage, setAlertMessage] = useState('');
+
+  const triggerAlert = (title: string, message: string) => {
+    setAlertTitle(title);
+    setAlertMessage(message);
+    setAlertOpen(true);
+  };
+
+  // Voice recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [recordingStream, setRecordingStream] = useState<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // Scroll to bottom
@@ -158,7 +184,7 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
     // Blocking Check
     const otherId = conversation?.participants?.find((p: string) => p !== auth.currentUser?.uid);
     if (userProfile?.blockedUsers?.includes(otherId)) {
-      alert("You have blocked this entity. Unblock to send signals.");
+      triggerAlert("SIGNAL_BLOCKED", "You have blocked this entity. Unblock to send signals.");
       return;
     }
 
@@ -211,7 +237,7 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
 
     // Size limit check (approx 800KB for Firestore documents)
     if (file.size > 800 * 1024) {
-      alert("SIGNAL TOO LARGE. TRANSMISSION LIMIT: 800KB. COMPRESS DATA AND RETRY.");
+      triggerAlert("SIGNAL TOO LARGE", "TRANSMISSION LIMIT: 800KB. COMPRESS DATA AND RETRY.");
       return;
     }
 
@@ -226,19 +252,43 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
         const isImage = fileType.startsWith('image/');
         const content = isImage ? 'Shared an image' : `Shared ${fileName}`;
 
-        await addDoc(collection(db, 'conversations', conversationId, 'messages'), {
+        let messagePayload: any = {
           conversationId,
           senderId: auth.currentUser!.uid,
           content,
-          fileData: base64,
-          fileName,
-          fileType,
           createdAt: serverTimestamp(),
           seen: false
-        });
+        };
+
+        if (recipientPublicKey) {
+          const encryptedData = {
+            content,
+            fileData: base64,
+            fileName,
+            fileType
+          };
+          const encrypted = await encryptSignal(JSON.stringify(encryptedData), recipientPublicKey);
+          messagePayload = {
+            ...messagePayload,
+            content: isImage ? "🔒 Encrypted Image" : `🔒 Encrypted File: ${fileName}`,
+            encryptedPayload: encrypted.payload,
+            sealedKey: encrypted.sealedKey,
+            iv: encrypted.iv,
+            isEncrypted: true
+          };
+        } else {
+          messagePayload = {
+            ...messagePayload,
+            fileData: base64,
+            fileName,
+            fileType
+          };
+        }
+
+        await addDoc(collection(db, 'conversations', conversationId, 'messages'), messagePayload);
 
         const updates: any = {
-          lastMessage: content,
+          lastMessage: recipientPublicKey ? "🔒 Encrypted File" : content,
           updatedAt: serverTimestamp(),
         };
 
@@ -258,8 +308,176 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
     reader.readAsDataURL(file);
   };
 
-  const deleteMessage = async (msgId: string) => {
-    if (!confirm("Are you sure you want to permanently incinerate this data signal?")) return;
+  // Voice recording & sending functions
+  useEffect(() => {
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  const formatDuration = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const secs = sec % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setRecordingStream(stream);
+      let mimeType = 'audio/webm';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/ogg';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/mp4';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
+
+      const recorder = mimeType 
+        ? new MediaRecorder(stream, { mimeType }) 
+        : new MediaRecorder(stream);
+        
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        if (audioChunksRef.current.length === 0) return;
+        
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64Audio = reader.result as string;
+          await sendVoiceNote(base64Audio, audioBlob.type);
+        };
+        reader.readAsDataURL(audioBlob);
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Microphone access denied:", err);
+      triggerAlert("SIGNAL_BLOCKED", "Microphone access denied or unsupported on this device.");
+    }
+  };
+
+  const stopAndSendRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      cleanupRecordingState();
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.onstop = () => {
+        const stream = mediaRecorderRef.current?.stream;
+        stream?.getTracks().forEach(track => track.stop());
+      };
+      mediaRecorderRef.current.stop();
+    }
+    cleanupRecordingState();
+  };
+
+  const cleanupRecordingState = () => {
+    setIsRecording(false);
+    setRecordingStream(null);
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+    setRecordingDuration(0);
+  };
+
+  const sendVoiceNote = async (base64Audio: string, mimeType: string) => {
+    if (!auth.currentUser || !userProfile) return;
+
+    if (base64Audio.length * 0.75 > 800 * 1024) {
+      triggerAlert("SIGNAL TOO LARGE", "TRANSMISSION LIMIT: 800KB.");
+      return;
+    }
+
+    setIsUploading(true);
+    const fileName = `voice_note_${Date.now()}.webm`;
+    const content = "🎤 Shared a voice note";
+    
+    try {
+      let messagePayload: any = {
+        conversationId,
+        senderId: auth.currentUser.uid,
+        content,
+        createdAt: serverTimestamp(),
+        seen: false
+      };
+
+      if (recipientPublicKey) {
+        const encryptedData = {
+          content,
+          fileData: base64Audio,
+          fileName,
+          fileType: mimeType
+        };
+
+        const encrypted = await encryptSignal(JSON.stringify(encryptedData), recipientPublicKey);
+        messagePayload = {
+          ...messagePayload,
+          content: "🔒 Encrypted Voice Note",
+          encryptedPayload: encrypted.payload,
+          sealedKey: encrypted.sealedKey,
+          iv: encrypted.iv,
+          isEncrypted: true
+        };
+      } else {
+        messagePayload = {
+          ...messagePayload,
+          fileData: base64Audio,
+          fileName,
+          fileType: mimeType
+        };
+      }
+
+      await addDoc(collection(db, 'conversations', conversationId, 'messages'), messagePayload);
+
+      const updates: any = {
+        lastMessage: recipientPublicKey ? "🔒 Encrypted Voice Note" : content,
+        updatedAt: serverTimestamp(),
+      };
+
+      const otherId = conversation?.participants?.find((p: string) => p !== auth.currentUser?.uid);
+      if (otherId) {
+        updates[`unreadCount.${otherId}`] = (conversation?.unreadCount?.[otherId] || 0) + 1;
+      }
+
+      await updateDoc(doc(db, 'conversations', conversationId), updates);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'messages/voice_note');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const deleteMessage = (msgId: string) => {
+    setConfirmDeleteId(msgId);
+  };
+
+  const confirmDeleteMessage = async () => {
+    if (!confirmDeleteId) return;
+    const msgId = confirmDeleteId;
+    setConfirmDeleteId(null);
     try {
       await deleteDoc(doc(db, 'conversations', conversationId, 'messages', msgId));
     } catch (e) {
@@ -302,18 +520,37 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
   };
 
   const clearConversation = async () => {
-    if (!confirm("Are you sure you want to incinerate this conversation?")) return;
-    
-    setShowOptions(false);
-    const snap = await getDocs(collection(db, 'conversations', conversationId, 'messages'));
-    const batch = writeBatch(db);
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+    setConfirmClear(true);
+  };
 
-    await updateDoc(doc(db, 'conversations', conversationId), {
-      lastMessage: 'Conversation incinerated.',
-      updatedAt: serverTimestamp()
-    });
+  const confirmClearConversation = async () => {
+    setConfirmClear(false);
+    setShowOptions(false);
+    try {
+      const snap = await getDocs(collection(db, 'conversations', conversationId, 'messages'));
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+
+      await updateDoc(doc(db, 'conversations', conversationId), {
+        lastMessage: 'Conversation incinerated.',
+        updatedAt: serverTimestamp()
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'conversations/clear');
+    }
+  };
+
+  const confirmBanUser = async () => {
+    if (!confirmBan) return;
+    const targetId = confirmBan;
+    setConfirmBan(null);
+    try {
+      await updateDoc(doc(db, 'users', targetId), { isBanned: true });
+      triggerAlert("SIGNAL TERMINATED", "The target entity has been indefinitely banished and incinerated.");
+    } catch (e) {
+      triggerAlert("AUTHORIZATION FAILED", "Security clearance insufficient or target is protected.");
+    }
   };
 
   // Filter messages from blocked users
@@ -325,11 +562,11 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
   if (!userProfile) return null;
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] relative">
+    <div className={cn("flex flex-col h-full relative transition-all duration-300", currentTheme.bgMain, currentTheme.textMain)}>
       {/* Chat Header */}
-      <div className="p-4 bg-[#0d0d0d] border-b border-zinc-900 flex items-center justify-between z-20">
+      <div className={cn("p-4 border-b flex items-center justify-between z-20 transition-all duration-300", currentTheme.bgHeader, currentTheme.border)}>
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-1 hover:bg-zinc-800 rounded-lg transition-colors">
+          <button onClick={onBack} className="p-1 hover:bg-zinc-805 rounded-lg transition-colors cursor-pointer">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="w-10 h-10 rounded-xl bg-zinc-800 flex items-center justify-center border border-zinc-700 overflow-hidden">
@@ -364,17 +601,10 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
         <div className="flex items-center gap-2">
           {userProfile?.isAdmin && (
             <button
-              onClick={async () => {
-                if (confirm(`INITIATE BAN PROTOCOL ON ${other.displayName}? THIS WILL INCINERATE THEIR ACCESS.`)) {
-                  try {
-                    await updateDoc(doc(db, 'users', otherId), { isBanned: true });
-                    alert("SIGNAL TERMINATED.");
-                  } catch (e) {
-                    alert("AUTHORIZATION FAILED OR TARGET IS PROTECTED.");
-                  }
-                }
+              onClick={() => {
+                setConfirmBan(otherId);
               }}
-              className="p-1 hover:bg-red-500/10 rounded-lg transition-colors group"
+              className="p-1 hover:bg-red-500/10 rounded-lg transition-colors group cursor-pointer"
             >
               <ShieldAlert className="w-5 h-5 text-zinc-600 group-hover:text-red-500" />
             </button>
@@ -444,7 +674,7 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-[#0d0d0d] border-t border-zinc-900 relative">
+      <div className={cn("p-4 border-t relative transition-all duration-300", currentTheme.bgHeader, currentTheme.border)}>
         <input 
           type="file" 
           ref={fileInputRef} 
@@ -452,39 +682,88 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
           className="hidden" 
           accept="image/*,.pdf,.doc,.docx,.txt"
         />
-        <form onSubmit={sendMessage} className="flex gap-2 items-center">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="w-12 h-14 bg-zinc-900 border border-zinc-800 text-zinc-500 rounded-2xl flex items-center justify-center hover:text-white hover:border-zinc-700 transition-all active:scale-95 flex-shrink-0"
-          >
-            {isUploading ? (
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+        
+        {isRecording ? (
+          <div className="flex items-center justify-between gap-3 bg-zinc-950 p-2 rounded-2xl border border-zinc-900 animate-pulse duration-1000">
+            <div className="flex items-center gap-3 pl-3">
+              <span className="flex h-3.5 w-3.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-red-600"></span>
+              </span>
+              <span className="text-xs font-mono font-black text-red-500 uppercase tracking-widest">
+                RECORDING {formatDuration(recordingDuration)}
+              </span>
+            </div>
+            
+            <AudioVisualizer stream={recordingStream} />
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cancelRecording}
+                className="p-3 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-red-400 rounded-xl transition-all cursor-pointer"
+                title="Discard Recording"
               >
-                <Shield className="w-5 h-5" />
-              </motion.div>
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={stopAndSendRecording}
+                className="p-3 bg-white hover:bg-zinc-200 text-black rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                title="Broadcast voice note"
+              >
+                <Check className="w-4 h-4 stroke-[3px]" />
+                <span className="text-[10px] uppercase font-black tracking-wider leading-none">Send</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={sendMessage} className="flex gap-2 items-center">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-12 h-14 bg-zinc-900 border border-zinc-800 text-zinc-500 rounded-2xl flex items-center justify-center hover:text-white hover:border-zinc-700 transition-all active:scale-95 flex-shrink-0"
+            >
+              {isUploading ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                >
+                  <Shield className="w-5 h-5" />
+                </motion.div>
+              ) : (
+                <Paperclip className="w-5 h-5" />
+              )}
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Whisper into the void..."
+              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl py-3.5 px-6 text-sm focus:outline-none focus:border-zinc-600 transition-all placeholder:text-zinc-700 font-medium"
+            />
+            {!input.trim() ? (
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={isUploading}
+                className="w-14 h-14 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white rounded-2xl flex items-center justify-center transition-all hover:scale-105 active:scale-95 flex-shrink-0 cursor-pointer"
+                title="Record voice note"
+              >
+                <Mic className="w-5 h-5" />
+              </button>
             ) : (
-              <Paperclip className="w-5 h-5" />
+              <button
+                type="submit"
+                disabled={isUploading}
+                className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center disabled:opacity-20 disabled:bg-zinc-900 disabled:text-zinc-800 transition-all active:scale-90 shadow-2xl shadow-white/10 flex-shrink-0"
+              >
+                <Send className="w-5 h-5" />
+              </button>
             )}
-          </button>
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Whisper into the void..."
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl py-3.5 px-6 text-sm focus:outline-none focus:border-zinc-600 transition-all placeholder:text-zinc-700 font-medium"
-          />
-          <button
-            type="submit"
-            disabled={!input.trim() || isUploading}
-            className="w-14 h-14 bg-white text-black rounded-2xl flex items-center justify-center disabled:opacity-20 disabled:bg-zinc-900 disabled:text-zinc-800 transition-all active:scale-90 shadow-2xl shadow-white/10"
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </form>
+          </form>
+        )}
       </div>
 
       {/* Ghost Mode Overlay Indicator if active */}
@@ -493,12 +772,52 @@ export default function ChatView({ conversationId, onBack, userProfile, privateK
           Ghost Sequence Engaged
         </div>
       )}
+
+      {/* Confirmation Modals */}
+      <ConfirmationModal
+        isOpen={confirmDeleteId !== null}
+        title="INCINERATE DATA SIGNAL?"
+        message="Are you sure you want to permanently incinerate this data signal? Once executed, this segment of information is lost forever in the deep void."
+        confirmLabel="INCINERATE"
+        cancelLabel="ABORT"
+        onConfirm={confirmDeleteMessage}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
+
+      <ConfirmationModal
+        isOpen={confirmClear}
+        title="INCINERATE CONVERSATION?"
+        message="This will completely clear your entire conversation with this participant. All encrypted payloads and file paths will be entirely scrubbed and dissolved into the nether. Proceed?"
+        confirmLabel="INCINERATE ALL"
+        cancelLabel="ABORT"
+        onConfirm={confirmClearConversation}
+        onCancel={() => setConfirmClear(false)}
+      />
+
+      <ConfirmationModal
+        isOpen={confirmBan !== null}
+        title="INITIATE BAN SEQUENCE?"
+        message={`Are you sure you want to initialize the administrative exclusion protocol on this signal? This will indefinitely revoke their encryption license.`}
+        confirmLabel="BANISH"
+        cancelLabel="ABORT"
+        onConfirm={confirmBanUser}
+        onCancel={() => setConfirmBan(null)}
+      />
+
+      {/* Custom Alerts */}
+      <AlertModal
+        isOpen={alertOpen}
+        title={alertTitle}
+        message={alertMessage}
+        onClose={() => setAlertOpen(false)}
+      />
     </div>
   );
 }
 
 function MessageItem({ msg, isMe, showTimeHeader, other, conversation, userProfile, privateKey, addReaction, deleteMessage, showEmojiPicker, setShowEmojiPicker }: any) {
   const [decryptedContent, setDecryptedContent] = useState<string | null>(msg.isEncrypted ? null : msg.content);
+  const [decryptedFile, setDecryptedFile] = useState<any | null>(msg.isEncrypted ? null : (msg.fileData ? { fileData: msg.fileData, fileName: msg.fileName, fileType: msg.fileType } : null));
   const [isDecrypting, setIsDecrypting] = useState(msg.isEncrypted);
 
   useEffect(() => {
@@ -506,7 +825,26 @@ function MessageItem({ msg, isMe, showTimeHeader, other, conversation, userProfi
       const doDecrypt = async () => {
         try {
           const result = await decryptSignal(msg.encryptedPayload, msg.sealedKey, msg.iv, privateKey);
+          
+          if (result.startsWith('{') && result.endsWith('}')) {
+            try {
+              const parsed = JSON.parse(result);
+              if (parsed.fileData) {
+                setDecryptedFile({
+                  fileData: parsed.fileData,
+                  fileName: parsed.fileName,
+                  fileType: parsed.fileType
+                });
+                setDecryptedContent(parsed.content);
+                return;
+              }
+            } catch (jsonErr) {
+              // Plaintext decryption path
+            }
+          }
+          
           setDecryptedContent(result);
+          setDecryptedFile(null);
         } catch (e) {
           setDecryptedContent("[DECRYPTION_FAILED]");
         } finally {
@@ -516,9 +854,10 @@ function MessageItem({ msg, isMe, showTimeHeader, other, conversation, userProfi
       doDecrypt();
     } else {
       setDecryptedContent(msg.content);
+      setDecryptedFile(msg.fileData ? { fileData: msg.fileData, fileName: msg.fileName, fileType: msg.fileType } : null);
       setIsDecrypting(false);
     }
-  }, [msg.id, privateKey, msg.encryptedPayload]);
+  }, [msg.id, privateKey, msg.encryptedPayload, msg.fileData, msg.fileName, msg.fileType]);
 
   return (
     <div className="space-y-2">
@@ -568,23 +907,25 @@ function MessageItem({ msg, isMe, showTimeHeader, other, conversation, userProfi
               <span className="text-[7px] font-bold uppercase tracking-widest">Encrypted</span>
             </div>
           )}
-          {msg.fileData && (
+          {decryptedFile && (
             <div className="mb-3">
-              {msg.fileType?.startsWith('image/') ? (
+              {decryptedFile.fileType?.startsWith('image/') ? (
                 <div className="rounded-xl overflow-hidden border border-white/10 group/img relative">
                   <img 
-                    src={msg.fileData} 
-                    alt={msg.fileName} 
+                    src={decryptedFile.fileData} 
+                    alt={decryptedFile.fileName} 
                     className="w-full max-h-[300px] object-cover" 
                   />
                   <a 
-                    href={msg.fileData} 
-                    download={msg.fileName}
+                    href={decryptedFile.fileData} 
+                    download={decryptedFile.fileName}
                     className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity"
                   >
                     <Download className="w-8 h-8 text-white" />
                   </a>
                 </div>
+              ) : decryptedFile.fileType?.startsWith('audio/') ? (
+                <AudioPlayer src={decryptedFile.fileData} isMe={isMe} />
               ) : (
                 <div className={cn(
                   "flex items-center gap-3 p-3 rounded-xl border",
@@ -597,12 +938,12 @@ function MessageItem({ msg, isMe, showTimeHeader, other, conversation, userProfi
                     <FileText className="w-5 h-5 opacity-60" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-bold truncate opacity-80 uppercase tracking-tight">{msg.fileName}</div>
-                    <div className="text-[9px] opacity-40 font-mono">{(msg.fileData.length * 0.75 / 1024).toFixed(1)} KB</div>
+                    <div className="text-[11px] font-bold truncate opacity-80 uppercase tracking-tight">{decryptedFile.fileName}</div>
+                    <div className="text-[9px] opacity-40 font-mono">{(decryptedFile.fileData.length * 0.75 / 1024).toFixed(1)} KB</div>
                   </div>
                   <a 
-                    href={msg.fileData} 
-                    download={msg.fileName}
+                    href={decryptedFile.fileData} 
+                    download={decryptedFile.fileName}
                     className="p-2 hover:bg-black/10 rounded-lg transition-colors"
                   >
                     <Download className="w-4 h-4" />
@@ -742,5 +1083,114 @@ function EmojiPicker({ msgId, isMe, onSelect }: { msgId: string, isMe: boolean, 
         )}
       </div>
     </motion.div>
+  );
+}
+
+function AudioPlayer({ src, isMe }: { src: string; isMe: boolean }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio(src);
+    audioRef.current = audio;
+
+    const onLoadedMetadata = () => {
+      setDuration(audio.duration || 0);
+    };
+
+    const onTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      setProgress((audio.currentTime / (audio.duration || 1)) * 100);
+    };
+
+    const onEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+    audio.addEventListener('timeupdate', onTimeUpdate);
+    audio.addEventListener('ended', onEnded);
+    
+    audio.load();
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+      audio.removeEventListener('timeupdate', onTimeUpdate);
+      audio.removeEventListener('ended', onEnded);
+    };
+  }, [src]);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().catch(e => console.error("Audio playback stalled", e));
+      setIsPlaying(true);
+    }
+  };
+
+  const handleTimelineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!audioRef.current || !duration) return;
+    const value = parseFloat(e.target.value);
+    const newTime = (value / 100) * duration;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+    setProgress(value);
+  };
+
+  const formatAudioTime = (time: number) => {
+    if (isNaN(time) || !isFinite(time)) return '0:00';
+    const mins = Math.floor(time / 60);
+    const secs = Math.floor(time % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  return (
+    <div className={cn(
+      "flex items-center gap-3 p-3 rounded-2xl w-full max-w-[280px] border shadow-md",
+      isMe 
+        ? "bg-zinc-100 text-zinc-900 border-zinc-200" 
+        : "bg-zinc-950/60 text-zinc-200 border-zinc-850"
+    )}>
+      <button 
+        type="button"
+        onClick={togglePlay}
+        className={cn(
+          "w-10 h-10 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-transform flex-shrink-0 cursor-pointer",
+          isMe ? "bg-zinc-900 text-white" : "bg-white text-zinc-950"
+        )}
+      >
+        {isPlaying ? (
+          <Pause className="w-4 h-4 fill-current" />
+        ) : (
+          <Play className="w-4 h-4 fill-current translate-x-[1px]" />
+        )}
+      </button>
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
+        <input 
+          type="range" 
+          min="0" 
+          max="100" 
+          value={progress}
+          onChange={handleTimelineChange}
+          className={cn(
+            "w-full h-1 rounded-lg appearance-none cursor-pointer focus:outline-none",
+            isMe ? "bg-zinc-300 accent-zinc-800" : "bg-zinc-800 accent-zinc-200"
+          )}
+        />
+        <div className="flex justify-between items-center text-[9px] font-mono opacity-50">
+          <span>{formatAudioTime(currentTime)}</span>
+          <span>{formatAudioTime(duration || 0)}</span>
+        </div>
+      </div>
+    </div>
   );
 }

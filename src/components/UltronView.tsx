@@ -4,14 +4,18 @@ import { motion, AnimatePresence } from 'motion/react';
 import { chatWithUltron } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
+import { getTheme } from '../lib/themes';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { ConfirmationModal } from './ui/Dialogs';
 
 export default function UltronView({ userProfile }: { userProfile: any }) {
+  const currentTheme = getTheme(userProfile?.theme || localStorage.getItem('ghostchat_theme') || 'ghostwire');
   const [messages, setMessages] = useState<{ role: 'user' | 'model', text: string }[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isSyncing, setIsSyncing] = useState(true);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const initialMessage: { role: 'model', text: string } = { 
@@ -90,7 +94,11 @@ export default function UltronView({ userProfile }: { userProfile: any }) {
   };
 
   const clearHistory = async () => {
-    if (!confirm("INCINERATE MEMORY LOGS?")) return;
+    setIsConfirmOpen(true);
+  };
+
+  const confirmClearHistory = async () => {
+    setIsConfirmOpen(false);
     const cleared: { role: 'user' | 'model', text: string }[] = [{ role: 'model', text: "Wiping my memory of your nonsense. Let's try again, if you must." }];
     setMessages(cleared);
     saveHistory(cleared);
@@ -98,23 +106,23 @@ export default function UltronView({ userProfile }: { userProfile: any }) {
 
   if (isSyncing) {
     return (
-      <div className="flex flex-col items-center justify-center h-full bg-[#0a0a0a]">
-        <Bot className="w-12 h-12 text-zinc-800 animate-pulse" />
+      <div className={cn("flex flex-col items-center justify-center h-full transition-all duration-300", currentTheme.bgMain, currentTheme.textMain)}>
+        <Bot className="w-12 h-12 text-zinc-805 animate-pulse" />
         <div className="mt-4 text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600">Accessing Core...</div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a] relative">
+    <div className={cn("flex flex-col h-full relative transition-all duration-300", currentTheme.bgMain, currentTheme.textMain)}>
       {/* AI Header */}
-      <div className="p-4 bg-zinc-900/50 border-b border-zinc-900 flex items-center justify-between">
+      <div className={cn("p-4 border-b flex items-center justify-between transition-all duration-300", currentTheme.bgHeader, currentTheme.border)}>
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center">
               <Bot className="w-6 h-6 text-black" />
             </div>
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#0a0a0a] animate-pulse" />
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-zinc-950 animate-pulse" />
           </div>
           <div>
             <div className="text-sm font-bold tracking-tight">ULTRON AI</div>
@@ -126,9 +134,10 @@ export default function UltronView({ userProfile }: { userProfile: any }) {
         </div>
         <button 
           onClick={clearHistory}
-          className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+          className="p-2 bg-zinc-900 border border-zinc-800 hover:border-red-900/30 hover:bg-red-950/20 rounded-xl transition-all group cursor-pointer"
+          title="Wipe Memory Archives"
         >
-          <Trash2 className="w-4 h-4 text-zinc-600" />
+          <Trash2 className="w-4 h-4 text-zinc-400 group-hover:text-red-500 transition-colors" />
         </button>
       </div>
 
@@ -184,14 +193,22 @@ export default function UltronView({ userProfile }: { userProfile: any }) {
       </div>
 
       {/* Input */}
-      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a] to-transparent">
+      <div className={cn("absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t to-transparent transition-all",
+        currentTheme.id === 'monochrome' ? 'from-black via-black' :
+        currentTheme.id === 'override' ? 'from-zinc-950 via-zinc-950' :
+        currentTheme.id === 'spectre' ? 'from-[#060e0a] via-[#060e0a]' :
+        currentTheme.id === 'amethyst' ? 'from-[#0b0711] via-[#0b0711]' :
+        'from-[#0a0a0a] via-[#0a0a0a]'
+      )}>
         <form onSubmit={handleSend} className="relative group">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask something, if you dare..."
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-4 pl-6 pr-14 text-sm focus:outline-none focus:border-zinc-700 transition-all shadow-2xl group-hover:border-zinc-700"
+            className={cn("w-full rounded-xl py-4 pl-6 pr-14 text-sm focus:outline-none transition-all shadow-2xl",
+              currentTheme.id === 'monochrome' ? 'bg-zinc-950 border border-zinc-700 focus:border-white text-white' : 'bg-zinc-905 border border-zinc-800 focus:border-zinc-650 text-white'
+            )}
           />
           <button
             type="submit"
@@ -202,6 +219,16 @@ export default function UltronView({ userProfile }: { userProfile: any }) {
           </button>
         </form>
       </div>
+
+      <ConfirmationModal
+        isOpen={isConfirmOpen}
+        title="INCINERATE MEMORY LOGS?"
+        message="Are you sure you want to completely erase the neural archives of your interaction history with Ultron? This act is irreversible."
+        confirmLabel="INCINERATE"
+        cancelLabel="ABORT"
+        onConfirm={confirmClearHistory}
+        onCancel={() => setIsConfirmOpen(false)}
+      />
     </div>
   );
 }

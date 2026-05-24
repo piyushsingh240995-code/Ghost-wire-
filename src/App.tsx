@@ -11,6 +11,7 @@ import { MessageSquare, Bot, User, Ghost, LogOut, ShieldAlert, Lock } from 'luci
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { generateIdentityKeys, unwrapPrivateKey } from './lib/crypto';
+import { getTheme } from './lib/themes';
 import ChatListView from './components/ChatListView';
 import ChatView from './components/ChatView';
 import UltronView from './components/UltronView';
@@ -19,6 +20,7 @@ import ProfileView from './components/ProfileView';
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<any>(null);
+  const currentTheme = getTheme(profile?.theme || localStorage.getItem('ghostchat_theme') || 'ghostwire');
   const [privateKey, setPrivateKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
@@ -395,7 +397,7 @@ export default function App() {
                 }
               }
             }}
-            className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 uppercase tracking-tighter"
+            className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 uppercase tracking-tighter cursor-pointer"
           >
             {(loading || authLoading) ? "ESTABLISHING SIGNAL..." : "Enter the Void"}
           </button>
@@ -404,9 +406,19 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="text-red-500 text-[10px] uppercase font-bold tracking-widest"
+              className="text-red-500 text-[10px] uppercase font-bold tracking-widest text-center space-y-2 w-full mt-4 bg-red-950/20 border border-red-900/30 p-4 rounded-xl"
             >
-              {initError}
+              <div>{initError}</div>
+              {(initError.includes("HANDSHAKE_ERROR") || initError.includes("REDIRECT_HANDSHAKE_FAILED") || initError.includes("PROTOCOL_DISABLED")) && (
+                <div className="text-zinc-400 font-sans tracking-normal normal-case text-left space-y-2 mt-2 text-xs">
+                  <p className="font-bold text-red-400">💡 Why did this happen?</p>
+                  <p>1. **Domain Whitelist**: Your container domain isn't authorized. Go to **Firebase Console ➔ Authentication ➔ Settings ➔ Authorized Domains** and add this hostname:</p>
+                  <code className="block bg-zinc-950 p-2 rounded text-[11px] font-mono select-all text-emerald-400 break-all">{window.location.hostname}</code>
+                  <p className="mt-2 text-zinc-500">2. **Google Cloud Console**: Whitelist this host in your **Google Client ID Authorized Redirect URIs** if configuring custom credentials.</p>
+                  <p className="mt-2 font-semibold text-zinc-300">⚡ Instant Workaround:</p>
+                  <p>Browser security settings (like cookie blocking) restrict redirects in iframes. Please click the **"Enter the Void"** button above: it launches a secured popup window which is 100% stable in this sandbox.</p>
+                </div>
+              )}
             </motion.div>
           )}
         </motion.div>
@@ -415,14 +427,14 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#0a0a0a] text-white overflow-hidden max-w-md mx-auto border-x border-zinc-900 shadow-2xl relative">
+    <div className={cn("flex flex-col h-screen overflow-hidden max-w-md mx-auto border-x shadow-2xl relative transition-all duration-300", currentTheme.bgMain, currentTheme.textMain, currentTheme.border)}>
       {/* Header */}
-      <header className="p-4 border-bottom border-zinc-900 flex justify-between items-center bg-[#0d0d0d]/80 backdrop-blur-md z-10">
+      <header className={cn("p-4 border-b flex justify-between items-center backdrop-blur-md z-10 transition-all duration-300", currentTheme.bgHeader, currentTheme.border)}>
         <div className="flex items-center gap-2">
-          <Ghost className={cn("w-6 h-6", profile?.ghostMode ? "text-blue-400" : "text-zinc-500")} />
+          <Ghost className={cn("w-6 h-6 transition-colors duration-300", profile?.ghostMode ? currentTheme.ghostAccent : "text-zinc-500")} />
           <h1 className="text-lg font-bold tracking-tight">GhostChat</h1>
           {profile?.ghostMode && (
-            <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
+            <span className={cn("text-[10px] bg-blue-500/20 px-2 py-0.5 rounded-full border border-blue-500/30 font-black tracking-wider transition-colors duration-300", currentTheme.id === 'monochrome' ? 'bg-white text-black border-white' : 'text-blue-400 border-blue-500/30' )}>
               GHOST ON
             </span>
           )}
@@ -459,25 +471,28 @@ export default function App() {
 
       {/* Navigation */}
       {!selectedChat && (
-        <nav className="h-16 border-top border-zinc-900 bg-[#0d0d0d] flex items-center justify-around px-6">
+        <nav className={cn("h-16 border-t flex items-center justify-around px-6 transition-all duration-300", currentTheme.border, currentTheme.bgNav)}>
           <NavButton 
             active={activeTab === 'chats'} 
             onClick={() => setActiveTab('chats')} 
             icon={<MessageSquare className="w-5 h-5" />} 
             label="Chats" 
             badge={totalUnread > 0 ? totalUnread : undefined}
+            theme={currentTheme}
           />
           <NavButton 
             active={activeTab === 'ultron'} 
             onClick={() => setActiveTab('ultron')} 
             icon={<Bot className="w-5 h-5" />} 
             label="Ultron" 
+            theme={currentTheme}
           />
           <NavButton 
             active={activeTab === 'profile'} 
             onClick={() => setActiveTab('profile')} 
             icon={<User className="w-5 h-5" />} 
             label="Me" 
+            theme={currentTheme}
           />
         </nav>
       )}
@@ -485,13 +500,13 @@ export default function App() {
   );
 }
 
-function NavButton({ active, onClick, icon, label, badge }: { active: boolean, onClick: () => void, icon: any, label: string, badge?: number }) {
+function NavButton({ active, onClick, icon, label, badge, theme }: { active: boolean, onClick: () => void, icon: any, label: string, badge?: number, theme: any }) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center gap-1 transition-colors relative",
-        active ? "text-white" : "text-zinc-600"
+        "flex flex-col items-center gap-1 transition-colors relative cursor-pointer",
+        active ? theme.accentText : "text-zinc-600"
       )}
     >
       <div className="relative">
@@ -500,7 +515,8 @@ function NavButton({ active, onClick, icon, label, badge }: { active: boolean, o
           <motion.div 
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
-            className="absolute -top-1.5 -right-1.5 bg-blue-500 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2 border-[#0d0d0d]"
+            className={cn("absolute -top-1.5 -right-1.5 text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center border-2", 
+              theme.badgeBg, theme.badgeText, theme.id === 'monochrome' ? 'border-black' : 'border-zinc-950')}
           >
             {badge > 9 ? '9+' : badge}
           </motion.div>
@@ -509,8 +525,10 @@ function NavButton({ active, onClick, icon, label, badge }: { active: boolean, o
       <span className="text-[10px] font-medium">{label}</span>
       {active && (
         <motion.div
-          layoutId="nav-pill"
-          className="absolute -bottom-2 w-1 h-1 bg-white rounded-full"
+           layoutId="nav-pill"
+           className={cn("absolute -bottom-2 w-1.5 h-1.5 rounded-full",
+             theme.id === 'monochrome' ? 'bg-white' : theme.id === 'ghostwire' ? 'bg-rose-500' : theme.id === 'override' ? 'bg-red-500' : theme.id === 'spectre' ? 'bg-emerald-400' : 'bg-purple-500'
+           )}
         />
       )}
     </button>

@@ -4,8 +4,10 @@ import { collection, query, where, onSnapshot, orderBy, addDoc, serverTimestamp,
 import { Search, Plus, MessageSquare, ShieldAlert, X, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, formatDate } from '../lib/utils';
+import { getTheme } from '../lib/themes';
 
 export default function ChatListView({ onChatSelect, onUltronSelect, userProfile }: { onChatSelect: (id: string) => void, onUltronSelect: () => void, userProfile: any }) {
+  const currentTheme = getTheme(userProfile?.theme || localStorage.getItem('ghostchat_theme') || 'ghostwire');
   const [chats, setChats] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,7 +96,7 @@ export default function ChatListView({ onChatSelect, onUltronSelect, userProfile
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className={cn("flex flex-col h-full transition-colors duration-300", currentTheme.bgMain, currentTheme.textMain)}>
       {/* Search Bar */}
       <div className="p-4 flex gap-2">
         <div className="relative flex-1">
@@ -105,7 +107,9 @@ export default function ChatListView({ onChatSelect, onUltronSelect, userProfile
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearching(true)}
-            className="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-zinc-700 transition-colors"
+            className={cn("w-full rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none transition-colors",
+              currentTheme.id === 'monochrome' ? 'bg-zinc-950 border border-zinc-700 focus:border-white text-white' : 'bg-zinc-900/50 border border-zinc-800 focus:border-zinc-700 text-white'
+            )}
           />
         </div>
         {isSearching && (
@@ -182,7 +186,7 @@ export default function ChatListView({ onChatSelect, onUltronSelect, userProfile
               <motion.div
                 layout
                 onClick={onUltronSelect}
-                className="flex items-center gap-4 p-4 bg-zinc-900/20 border border-zinc-800 rounded-2xl cursor-pointer hover:bg-zinc-900/40 transition-all active:scale-[0.98] group relative overflow-hidden"
+                className={cn("flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all active:scale-[0.98] group relative overflow-hidden", currentTheme.bgCard, currentTheme.id === 'monochrome' ? 'hover:border-white' : 'hover:bg-zinc-900/40')}
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-red-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="relative">
@@ -216,7 +220,7 @@ export default function ChatListView({ onChatSelect, onUltronSelect, userProfile
                     key={chat.id}
                     layout
                     onClick={() => onChatSelect(chat.id)}
-                    className="flex items-center gap-4 p-4 bg-[#0d0d0d] border border-zinc-900 rounded-2xl cursor-pointer hover:bg-zinc-900/30 transition-all active:scale-[0.98]"
+                    className={cn("flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all active:scale-[0.98]", currentTheme.bgCard, currentTheme.id === 'monochrome' ? 'hover:border-zinc-500' : 'hover:bg-zinc-900/20')}
                   >
                     <div className="relative">
                       <div className="w-12 h-12 rounded-2xl bg-zinc-800 flex items-center justify-center overflow-hidden border border-zinc-800">
@@ -245,7 +249,7 @@ export default function ChatListView({ onChatSelect, onUltronSelect, userProfile
                             <motion.div 
                               initial={{ scale: 0 }}
                               animate={{ scale: 1 }}
-                              className="bg-blue-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] flex items-center justify-center shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                              className={cn("text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] flex items-center justify-center shadow-[0_0_10px_rgba(59,130,246,0.5)] transition-colors duration-300", currentTheme.badgeBg, currentTheme.badgeText)}
                             >
                               {chat.unreadCount?.[auth.currentUser?.uid || ''] > 9 ? '9+' : chat.unreadCount?.[auth.currentUser?.uid || '']}
                             </motion.div>
